@@ -9,6 +9,14 @@ wheels/
 # Virtual environments
 .venv
 
+# Environment variables
+.env
 
-client_secret.json
-src/.env
+# OAuth2 client secrets
+client_secret*.json
+
+# Lock files
+*.lock
+
+# MSAL cache file (contains tokens)
+.msal_outlook_cache.bin
