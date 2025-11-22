@@ -15,11 +15,21 @@ from src.token_utils import (
     refresh_outlook_access_token,
     get_outlook_email_from_access_token,
 )
+from src.auth import create_db_and_tables, authenticate_user, register_user
+from src.accounts import (
+    list_email_accounts_for_user,
+    create_email_account_for_user,
+    get_access_token_for_account,
+)
 
 load_dotenv()
 
+print("DEBUG TOKEN KEY:", os.getenv("TOKEN_ENCRYPTION_KEY"))
+
+create_db_and_tables()
+
 # -------------------------------------------------------------------
-# Page config & light styling
+# Page config & styling
 # -------------------------------------------------------------------
 st.set_page_config(page_title="IMAP Email Viewer POC", layout="wide")
 
@@ -32,10 +42,10 @@ st.markdown(
     }
     .email-meta {
         font-size: 0.9rem;
-        color: #666666;
+        color: #888888;
     }
     .stTabs [role="tablist"] {
-        border-bottom: 1px solid #e0e0e0;
+        border-bottom: 1px solid #33333333;
     }
     .stTabs [role="tab"] {
         padding-top: 0.5rem;
@@ -49,7 +59,8 @@ st.markdown(
 st.title("📬 IMAP Email Viewer")
 
 st.caption(
-    "Connect to Gmail or Outlook using OAuth2, fetch the latest emails, and inspect them in a clean viewer."
+    "Connect multiple Gmail/Outlook accounts per user using OAuth2 refresh tokens, "
+    "and inspect the latest emails in a clean viewer."
 )
 
 # -------------------------------------------------------------------
@@ -63,143 +74,166 @@ if "selected_index" not in st.session_state:
     st.session_state.selected_index = 0
 if "connection_info" not in st.session_state:
     st.session_state.connection_info = {}
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+if "user_email" not in st.session_state:
+    st.session_state.user_email = None
+if "selected_account_id" not in st.session_state:
+    st.session_state.selected_account_id = None
 
+connect_btn: bool = False
+fetch_limit: int = 10
 # -------------------------------------------------------------------
-# Sidebar: Connection Settings
+# Sidebar: Account + Email Accounts + Connection Settings
 # -------------------------------------------------------------------
 with st.sidebar:
-    st.header("Connection Settings")
+    st.header("Account")
 
-    provider = st.selectbox("Provider", ["gmail", "outlook"])
-    use_env = st.checkbox("Use credentials from .env (recommended)", value=True)
+    if st.session_state.user_id is None:
+        # Tabs: Login / Register
+        auth_tab = st.tabs(["Login", "Register"])
 
-    st.markdown("### Credentials")
+        # --- Login tab ---
+        with auth_tab[0]:
+            st.subheader("Login")
 
-    manual_email: str | None = None
-    manual_credential: str | None = None
+            login_email = st.text_input("Email", key="login_email")
+            login_password = st.text_input("Password", type="password", key="login_password")
+            login_btn = st.button("Sign in")
 
-    if use_env:
-        if provider == "gmail":
-            st.write("Using **GMAIL_REFRESH_TOKEN** / **GMAIL_ACCESS_TOKEN** from `.env`.")
-            st.write("Email will be auto-detected from token if `GMAIL_EMAIL` is missing.")
-        else:
-            st.write("Using **OUTLOOK_REFRESH_TOKEN** / **OUTLOOK_ACCESS_TOKEN** from `.env`.")
-            st.write("Email will be auto-detected from token if `OUTLOOK_EMAIL` is missing.")
+            if login_btn:
+                try:
+                    user = authenticate_user(login_email, login_password)
+                    if user:
+                        st.session_state.user_id = user.id
+                        st.session_state.user_email = user.email
+                        st.success(f"Logged in as {user.email}")
+                        st.rerun()
+                    else:
+                        st.error("Invalid email or password.")
+                except Exception as e:
+                    st.error(f"Login failed: {e}")
+
+        # --- Register tab ---
+        with auth_tab[1]:
+            st.subheader("Register")
+
+            reg_email = st.text_input("Email ", key="reg_email")
+            reg_password = st.text_input("Password ", type="password", key="reg_password")
+            reg_password2 = st.text_input("Confirm Password", type="password", key="reg_password2")
+            reg_btn = st.button("Create account")
+
+            if reg_btn:
+                if not reg_email or not reg_password:
+                    st.error("Email and password are required.")
+                elif reg_password != reg_password2:
+                    st.error("Passwords do not match.")
+                else:
+                    try:
+                        user = register_user(reg_email, reg_password)
+                        st.success("Account created. You can now log in.")
+                    except Exception as e:
+                        st.error(f"Registration failed: {e}")
     else:
-        manual_email = st.text_input("Email address")
-        manual_credential = st.text_input(
-            "Credential (access token / app password)",
-            type="password",
+        st.subheader("Logged in")
+        st.write(st.session_state.user_email)
+        if st.button("Log out"):
+            st.session_state.user_id = None
+            st.session_state.user_email = None
+            st.session_state.connected = False
+            st.session_state.parsed_messages = []
+            st.rerun()
+
+        # ---------------- Email accounts for this user ----------------
+        st.markdown("---")
+        st.subheader("Email Accounts")
+
+        accounts = list_email_accounts_for_user(st.session_state.user_id)
+        selected_account_id = None
+
+        if accounts:
+            labels = [
+                f"{acc.provider.upper()} • {acc.email_address}"
+                for acc in accounts
+            ]
+            id_map = {labels[i]: accounts[i].id for i in range(len(accounts))}
+            selected_label = st.selectbox("Select account", options=labels)
+            selected_account_id = id_map[selected_label]
+        else:
+            st.info("No email accounts yet. Add one below.")
+            selected_account_id = None
+
+        st.session_state.selected_account_id = selected_account_id
+
+        with st.expander("➕ Add new account"):
+            new_provider = st.selectbox("Provider", ["gmail", "outlook"], key="new_acc_provider")
+            new_email = st.text_input("Email address", key="new_acc_email")
+            new_refresh = st.text_area(
+                "Refresh token",
+                key="new_acc_refresh",
+                height=100,
+                help="Paste the refresh token obtained from the Gmail/Outlook OAuth flow.",
+            )
+            save_btn = st.button("Save account", key="save_new_account")
+
+            if save_btn:
+                if not new_email or not new_refresh:
+                    st.error("Email and refresh token are required.")
+                else:
+                    try:
+                        create_email_account_for_user(
+                            st.session_state.user_id,
+                            new_provider,
+                            new_email,
+                            new_refresh,
+                        )
+                        st.success("Account added.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to add account: {e}")
+
+        # ---------------- Connection Settings ----------------
+        st.markdown("---")
+        st.header("Connection Settings")
+
+        fetch_limit = st.slider(
+            "Fetch latest N emails",
+            min_value=1,
+            max_value=50,
+            value=10,
         )
 
-    use_oauth = st.checkbox("Use OAuth (XOAUTH2)", value=True)
-    fetch_limit = st.slider("Fetch latest N emails", min_value=1, max_value=50, value=10)
-
-    st.markdown("---")
-    connect_btn = st.button("🔌 Connect & Fetch")
+        connect_btn = st.button(
+            "🔌 Connect & Fetch",
+            disabled=(st.session_state.selected_account_id is None),
+        )
 
 # -------------------------------------------------------------------
-# Connect + Fetch (Async)
+# Require login
 # -------------------------------------------------------------------
-async def _async_connect_and_fetch(
-    provider: str,
-    use_env: bool,
-    manual_email: str | None,
-    manual_credential: str | None,
-    use_oauth: bool,
+if st.session_state.user_id is None:
+    st.info("Please log in or register using the sidebar to start using the IMAP viewer.")
+    st.stop()
+
+# -------------------------------------------------------------------
+# Connect + Fetch (Async) for selected account
+# -------------------------------------------------------------------
+async def _async_connect_and_fetch_account(
+    account_id: int,
     limit: int,
 ):
     start = time.time()
 
-    provider = provider.lower()
-    email_addr: str | None = None
-    access_token: str | None = None
+    user_id = st.session_state.user_id
+    provider, email_addr, access_token = get_access_token_for_account(user_id, account_id)
 
-    # ----- Gmail -----
-    if provider == "gmail":
-        if use_env:
-            gmail_token: str | None = None
+    client = AsyncIMAPClient(
+        provider=provider,
+        email=email_addr,
+        credential=access_token,
+        use_oauth=True,
+    )
 
-            gmail_refresh = os.getenv("GMAIL_REFRESH_TOKEN")
-            if gmail_refresh:
-                gmail_token = refresh_gmail_access_token(gmail_refresh)
-
-            if not gmail_token:
-                gmail_access = os.getenv("GMAIL_ACCESS_TOKEN")
-                if gmail_access:
-                    gmail_token = gmail_access
-
-            if not gmail_token:
-                raise RuntimeError(
-                    "No Gmail token found. Set GMAIL_REFRESH_TOKEN or GMAIL_ACCESS_TOKEN in .env."
-                )
-
-            email_addr = os.getenv("GMAIL_EMAIL") or get_gmail_email(gmail_token)
-            if not email_addr:
-                raise RuntimeError(
-                    "Could not determine Gmail email address. "
-                    "Set GMAIL_EMAIL or ensure the token can call Gmail API."
-                )
-
-            access_token = gmail_token
-        else:
-            if not manual_email or not manual_credential:
-                raise RuntimeError("Email and credential are required for manual Gmail connection.")
-            email_addr = manual_email
-            access_token = manual_credential
-
-        client = AsyncIMAPClient(
-            provider="gmail",
-            email=email_addr,
-            credential=access_token,
-            use_oauth=use_oauth,
-        )
-
-    # ----- Outlook -----
-    else:
-        if use_env:
-            outlook_token: str | None = None
-
-            outlook_refresh = os.getenv("OUTLOOK_REFRESH_TOKEN")
-            if outlook_refresh:
-                outlook_token = refresh_outlook_access_token(outlook_refresh)
-
-            if not outlook_token:
-                outlook_access = os.getenv("OUTLOOK_ACCESS_TOKEN")
-                if outlook_access:
-                    outlook_token = outlook_access
-
-            if not outlook_token:
-                raise RuntimeError(
-                    "No Outlook token found. "
-                    "Set OUTLOOK_REFRESH_TOKEN or OUTLOOK_ACCESS_TOKEN in .env."
-                )
-
-            email_addr = (
-                get_outlook_email_from_access_token(outlook_token)
-                or os.getenv("OUTLOOK_EMAIL")
-            )
-            if not email_addr:
-                raise RuntimeError(
-                    "Could not determine Outlook email address. "
-                    "Set OUTLOOK_EMAIL or ensure the token has email/UPN claims."
-                )
-
-            access_token = outlook_token
-        else:
-            if not manual_email or not manual_credential:
-                raise RuntimeError("Email and credential are required for manual Outlook connection.")
-            email_addr = manual_email
-            access_token = manual_credential
-
-        client = AsyncIMAPClient(
-            provider="outlook",
-            email=email_addr,
-            credential=access_token,
-            use_oauth=use_oauth,
-        )
-
-    # Connect + fetch
     await client.connect()
     raw_list = await client.fetch_latest(limit)
     await client.close()
@@ -220,15 +254,16 @@ async def _async_connect_and_fetch(
     }
 
 
-def connect_and_fetch(provider, use_env, manual_email, manual_credential, use_oauth, limit):
+def connect_and_fetch_selected_account(limit: int):
+    account_id = st.session_state.selected_account_id
+    if account_id is None:
+        st.error("No account selected.")
+        return
+
     try:
         asyncio.run(
-            _async_connect_and_fetch(
-                provider,
-                use_env,
-                manual_email,
-                manual_credential,
-                use_oauth,
+            _async_connect_and_fetch_account(
+                account_id,
                 limit,
             )
         )
@@ -243,14 +278,15 @@ def connect_and_fetch(provider, use_env, manual_email, manual_credential, use_oa
         st.error(f"Connection or fetch failed: {e}")
 
 
-if connect_btn:
-    connect_and_fetch(provider, use_env, manual_email, manual_credential, use_oauth, fetch_limit)
+if st.session_state.user_id is not None and "connect_btn" in locals():
+    if connect_btn and st.session_state.selected_account_id is not None:
+        connect_and_fetch_selected_account(fetch_limit)
 
 # -------------------------------------------------------------------
 # Main Layout: Email List + Tabs Viewer
 # -------------------------------------------------------------------
 if not st.session_state.connected:
-    st.info("Use the sidebar to connect and fetch emails.")
+    st.info("Use the sidebar to select an account and fetch emails.")
 else:
     parsed = st.session_state.parsed_messages
     info = st.session_state.connection_info
@@ -276,8 +312,6 @@ else:
             """,
             unsafe_allow_html=True,
         )
-
-
 
     col_list, col_view = st.columns([1, 2])
 
@@ -319,7 +353,6 @@ else:
             f"<div class='email-meta'>From: {sender_html}<br>To: {to_html}<br>Date: {date_html}</div>",
             unsafe_allow_html=True,
         )
-
 
         tabs = st.tabs(["Overview", "Plain Text", "HTML", "Attachments", "Raw JSON"])
 
@@ -407,4 +440,4 @@ else:
 # Footer
 # -------------------------------------------------------------------
 st.markdown("---")
-st.caption("IMAP Viewer — Gmail & Outlook")
+st.caption("IMAP Viewer — Async IMAP + Multi-Account OAuth (Gmail & Outlook)")
