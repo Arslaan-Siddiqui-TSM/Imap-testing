@@ -1,141 +1,390 @@
+# **IMAP OAuth2 Testing Toolkit**
 
+A small toolkit and Streamlit demo application for authenticating to **Gmail** and **Outlook** via **OAuth2 (XOAUTH2)** and running basic IMAP operations using an asynchronous client.
 
-# **Gmail IMAP OAuth Environment Variable Setup Guide**
+This project is intended as a clear, minimal reference for:
 
-This document provides a step-by-step guide for generating all required environment variables to enable IMAP access for Gmail using OAuth 2.0 authentication. Follow each section carefully to ensure a complete and secure configuration.
+* acquiring tokens interactively (Google & Microsoft),
+* refreshing tokens,
+* discovering the authenticated email account,
+* connecting to IMAP using XOAUTH2,
+* testing IMAP access programmatically or via a UI.
 
 ---
 
-## **Required Environment Variables**
+# **Table of Contents**
 
-Add the following variables to your `.env` file:
+1. [Features](#features)
+2. [Project Structure](#project-structure)
+3. [Prerequisites](#prerequisites)
+4. [Quick Start](#quick-start)
+5. [.env Setup](#env-setup)
+6. [Generating OAuth Tokens](#generating-oauth-tokens)
+7. [Gmail Setup (Google Cloud Console)](#gmail-setup-google-cloud-console)
+8. [Outlook Setup (Azure Portal)](#outlook-setup-azure-portal)
+9. [Running the Tools](#running-the-tools)
+10. [Behavior Notes](#behavior-notes)
+11. [Scopes & Permissions Reference](#scopes--permissions-reference)
+12. [Troubleshooting](#troubleshooting)
+13. [Security Notes](#security-notes)
+
+---
+
+# **Features**
+
+* OAuth2 helper scripts for **Gmail** and **Outlook**
+* Interactive token generation (desktop installed-app flow / MSAL public client)
+* Token refresh helpers
+* Automatic email discovery using Google/Gmail APIs and Microsoft Graph/ID token claims
+* Asynchronous IMAP client for testing XOAUTH2 authentication
+* Streamlit UI for quick validation of IMAP connectivity
+
+---
+
+# **Project Structure**
+
+```
+src/
+  gmail_oauth.py        # Interactive Google OAuth helper
+  outlook_oauth.py      # Interactive Microsoft OAuth helper
+  token_utils.py        # Token refresh and email discovery
+  imap_client.py        # Async IMAP XOAUTH2 client (AsyncIMAPClient)
+
+app.py                  # Streamlit testing UI
+test_run.py             # Async test runner (parallel connect + fetch)
+```
+
+---
+
+# **Prerequisites**
+
+* **Python 3.10+**
+* OAuth applications registered in:
+
+  * **Google Cloud Console** (for Gmail)
+  * **Azure Portal** (for Outlook / Microsoft 365 / Outlook.com)
+* A `.env` file containing OAuth credentials
+  (see next section; **never commit this file**)
+
+This project works on **Windows**, **macOS**, and **Linux**. Commands below use Windows examples where relevant.
+
+---
+
+# **Quick Start**
+
+### **1. Create and activate a virtual environment**
+
+**Windows (PowerShell)**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+**macOS / Linux**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### **2. Install dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+### **3. Create your `.env` file**
+
+See the template below.
+
+### **4. Generate tokens**
+
+```bash
+python -m src.gmail_oauth
+python -m src.outlook_oauth
+```
+
+### **5. Test IMAP**
+
+```bash
+python test_run.py
+```
+
+### **6. Run the Streamlit UI**
+
+```bash
+streamlit run app.py
+```
+
+---
+
+# **.env Setup**
+
+Create a `.env` file at the project root:
 
 ```env
-GMAIL_CLIENT_ID=
-GMAIL_CLIENT_SECRET=
+# Gmail OAuth
+GMAIL_CLIENT_ID=your-google-client-id
+GMAIL_CLIENT_SECRET=your-google-client-secret
 GMAIL_ACCESS_TOKEN=
 GMAIL_REFRESH_TOKEN=
-GMAIL_EMAIL=
+
+# Outlook OAuth (MSAL public client)
+OUTLOOK_CLIENT_ID=your-azure-client-id
+OUTLOOK_TENANT_ID=common
+OUTLOOK_ACCESS_TOKEN=
+OUTLOOK_REFRESH_TOKEN=
 ```
 
-Each variable is explained in the sections below.
+Tokens will be filled automatically after running the OAuth scripts.
 
 ---
 
-## **1. Enable IMAP in Gmail**
+# **Generating OAuth Tokens**
 
-IMAP must be enabled in your Gmail account for the application to read emails.
+### **Fast method (recommended)**
 
-**Steps:**
+From the project root:
 
-1. Open Gmail.
-2. Navigate to **Settings → See all settings**.
-3. Open the **Forwarding and POP/IMAP** tab.
-4. Under **IMAP Access**, select **Enable IMAP**.
-5. Save your changes.
-
-This step is mandatory. IMAP authentication will fail if it is not enabled.
-
----
-
-## **2. Create a Google Cloud Project**
-
-1. Open the Google Cloud Console:
-   [https://console.cloud.google.com](https://console.cloud.google.com)
-2. Click **New Project**.
-3. Enter a project name and (optionally) organization.
-4. Click **Create**.
-5. Select the newly created project.
-
----
-
-## **3. Enable the Gmail API**
-
-1. Navigate to **APIs & Services → Enable APIs and Services**.
-2. Search for **Gmail API**.
-3. Select it and click **Enable**.
-
----
-
-## **4. Configure the OAuth Consent Screen**
-
-1. Go to **APIs & Services → OAuth Consent Screen**.
-2. Select the **External** user type.
-3. Provide the required application information.
-4. Under **Scopes**, click **Add or Remove Scopes**.
-5. Add the following recommended scopes:
-
-   * `userinfo.email`
-   * `userinfo.profile`
-   * `gmail.modify`
-6. Save and proceed.
-7. You may keep the app in **Testing** mode.
-
----
-
-## **5. Create an OAuth Client (Desktop Application)**
-
-1. Go to **APIs & Services → Credentials**.
-2. Click **Create Credentials → OAuth Client ID**.
-3. Choose **Desktop App** as the application type.
-4. Enter a name and click **Create**.
-5. Download the OAuth client JSON file.
-
-From the downloaded file, copy:
-
-* `client_id`
-* `client_secret`
-
-Add them to your `.env` file:
-
-```env
-GMAIL_CLIENT_ID=<client_id>
-GMAIL_CLIENT_SECRET=<client_secret>
+```bash
+python -m src.gmail_oauth
+python -m src.outlook_oauth
 ```
 
+Each script:
+
+* opens a browser,
+* walks you through OAuth sign-in,
+* outputs access + refresh tokens,
+* outputs discovered email (if available).
+
+Copy the values into your `.env`.
+
 ---
 
-## **6. Generate Access and Refresh Tokens**
+# **Gmail Setup (Google Cloud Console)**
 
-Run your Gmail OAuth script:
+<details>
+<summary><strong>Click to expand detailed steps</strong></summary>
+
+### **1. Create or select a project**
+
+[https://console.cloud.google.com](https://console.cloud.google.com)
+
+### **2. Enable the Gmail API**
+
+`APIs & Services → Library → Gmail API → Enable`
+
+### **3. Configure the OAuth consent screen**
+
+* Type: **External** (recommended for testing)
+* Fill App name & emails
+* Add scope:
+  `https://mail.google.com/`
+* Keep Publishing status = **Testing**
+* Add your Google accounts under **Test users**
+
+### **4. Create OAuth credentials**
+
+`Credentials → Create Credentials → OAuth client ID`
+
+* Application type: **Desktop app**
+* Copy **Client ID** and **Client Secret** into your `.env`
+
+### **5. Generate tokens**
 
 ```bash
 python -m src.gmail_oauth
 ```
 
-A browser window will open prompting you to log in and authorize access.
-
-After successful authorization, the script will output:
-
-```
-GMAIL_ACCESS_TOKEN=...
-GMAIL_REFRESH_TOKEN=...
-```
-
-Insert both values into your `.env` file.
+</details>
 
 ---
 
-## **7. Add Your Gmail Address**
+# **Outlook Setup (Azure Portal)**
 
-Include your Gmail account email:
+<details>
+<summary><strong>Click to expand detailed steps</strong></summary>
 
-```env
-GMAIL_EMAIL=your_email@gmail.com
+### **1. Register an app**
+
+Azure Portal → Azure Active Directory → App registrations → *New registration*
+
+* Supported account types:
+  **“Personal + Work/School accounts”**
+* Redirect URI: not required for MSAL interactive desktop flow
+
+### **2. Record app identifiers**
+
+Use in `.env`:
+
+* **Application (client) ID → OUTLOOK_CLIENT_ID**
+* **Directory (tenant) ID → OUTLOOK_TENANT_ID** (or use `common`)
+
+### **3. Authentication settings**
+
+* Add **Mobile and desktop applications**
+* Enable **Allow public client flows**
+
+### **4. API permissions**
+
+Add:
+
+* `IMAP.AccessAsUser.All` (Exchange Online delegated)
+  **or**
+* Graph delegated permissions:
+
+  * `Mail.Read` / `Mail.ReadWrite`
+* Always add:
+
+  * `offline_access`
+  * `openid`, `profile`, `email`
+
+Admin consent may be required.
+
+### **5. Generate tokens**
+
+```bash
+python -m src.outlook_oauth
+```
+
+</details>
+
+---
+
+# **Running the Tools**
+
+### **Generate tokens**
+
+```bash
+python -m src.gmail_oauth
+python -m src.outlook_oauth
+```
+
+### **Run the async IMAP test**
+
+```bash
+python test_run.py
+```
+
+### **Run the Streamlit UI**
+
+```bash
+streamlit run app.py
 ```
 
 ---
 
-## **8. Example `.env` File**
+# **Behavior Notes**
 
-```env
-# Gmail OAuth
-GMAIL_CLIENT_ID=1234567890-abc123.apps.googleusercontent.com
-GMAIL_CLIENT_SECRET=ABCXYZ12345
-GMAIL_ACCESS_TOKEN=ya29.a0AfH6...
-GMAIL_REFRESH_TOKEN=1//0gdfsg34...
-GMAIL_EMAIL=yourname@gmail.com
+* **Automatic email discovery**
+
+  * Gmail: via `users/me/profile`
+  * Microsoft: via ID token claims or Graph `/me`
+
+* **Token refresh**
+
+  * Helpers detect expired access tokens and exchange refresh tokens for new ones
+  * If a new refresh token is issued, `.env` is updated automatically
+
+* **IMAP client**
+
+  * Uses OAuth2 XOAUTH2 only
+  * No password fallback is supported
+
+---
+
+# **Scopes & Permissions Reference**
+
+## **Gmail**
+
+### IMAP scope
+
+* `https://mail.google.com/`
+
+### Optional identity
+
+* `openid`
+* `email`
+* `profile`
+
+### Recommended
+
+```
+["https://mail.google.com/", "openid", "email", "profile"]
 ```
 
 ---
 
+## **Microsoft / Outlook**
+
+### IMAP delegated
+
+* `IMAP.AccessAsUser.All`
+
+### Graph mail
+
+* `Mail.Read`
+* `Mail.ReadWrite`
+
+### Identity & refresh
+
+* `offline_access`
+* `openid`
+* `profile`
+* `email`
+
+### Recommended sets
+
+**Graph (read-only):**
+
+```
+["offline_access", "openid", "profile", "Mail.Read"]
+```
+
+**Graph (read-write):**
+
+```
+["offline_access", "openid", "profile", "Mail.ReadWrite"]
+```
+
+**IMAP:**
+
+```
+["offline_access", "openid", "profile", "IMAP.AccessAsUser.All"]
+```
+
+---
+
+# **Troubleshooting**
+
+### **Gmail 403 / access_denied**
+
+* Ensure OAuth consent screen is configured
+* Add signing account as a **Test user**
+* Ensure Gmail API is enabled
+
+### **Microsoft admin consent errors**
+
+* Many tenants require admin approval for IMAP
+* Try a personal account or a tenant where you have admin rights
+
+### **ModuleNotFoundError: No module named 'src'**
+
+Run scripts as modules from the project root:
+
+```bash
+python -m src.gmail_oauth
+```
+
+---
+
+# **Security Notes**
+
+* **Never commit `.env`**
+* Use the **least-privileged scopes**
+* Store refresh tokens in a secure secret store
+* Public-client OAuth flows are fine for local testing; use **confidential clients** for production deployments
+
+---
