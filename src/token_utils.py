@@ -173,47 +173,44 @@ def get_outlook_email_from_access_token(access_token: str) -> Optional[str]:
     return None
 
 
-def refresh_outlook_access_token(refresh_token: str, timeout: int = 10) -> Optional[str]:
-    """
-    Use the OAuth2 refresh_token to get a fresh Outlook IMAP access token.
-
-    If Microsoft rotates the refresh token, we update OUTLOOK_REFRESH_TOKEN
-    in os.environ and the .env file.
-    """
+def refresh_outlook_access_token(refresh_token: str) -> Optional[str]:
+    """Use the OAuth2 refresh_token to get a fresh Outlook access token."""
     if not refresh_token:
         return None
 
     client_id = os.getenv("OUTLOOK_CLIENT_ID")
+    client_secret = os.getenv("OUTLOOK_CLIENT_SECRET")
     tenant_id = os.getenv("OUTLOOK_TENANT_ID", "common")
 
-    if not client_id:
-        raise RuntimeError("OUTLOOK_CLIENT_ID must be set in .env")
+    if not client_id or not client_secret:
+        raise RuntimeError("OUTLOOK_CLIENT_ID and OUTLOOK_CLIENT_SECRET must be set")
+
+    token_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+
+    # You can omit scope for refresh, but sending the same set is fine.
+    scope = (
+        "openid profile email offline_access "
+        "https://outlook.office.com/IMAP.AccessAsUser.All"
+    )
 
     data = {
         "client_id": client_id,
-        "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
-        "refresh_token": refresh_token,
+        "client_secret": client_secret,
         "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": scope,
     }
 
     try:
-        resp = requests.post(
-            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
-            data=data,
-            timeout=timeout,
-        )
-        if resp.status_code == 200:
-            body = resp.json()
-            access_token = body.get("access_token")
-            new_refresh = body.get("refresh_token")
-
-            if new_refresh and new_refresh != refresh_token:
-                _update_env_file("OUTLOOK_REFRESH_TOKEN", new_refresh)
-
-            return access_token
-
-        print("Outlook refresh failed:", resp.status_code, resp.text)
+        resp = requests.post(token_endpoint, data=data, timeout=10)
     except requests.RequestException as e:
-        print("Error refreshing Outlook token:", e)
+        print("Outlook refresh failed (network error):", e)
+        return None
 
+    if resp.status_code == 200:
+        body = resp.json()
+        return body.get("access_token")
+
+    print("Outlook refresh failed:", resp.status_code, resp.text)
     return None
+

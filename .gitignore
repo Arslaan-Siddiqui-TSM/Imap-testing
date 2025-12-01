@@ -20,3 +20,6 @@ client_secret*.json
 
 # MSAL cache file (contains tokens)
 .msal_outlook_cache.bin
+
+# Database
+*.db
